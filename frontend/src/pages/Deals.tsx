@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import type { Deal, Category } from '../types';
 import { ListingCard } from '../components/ListingCard';
 import { CategorySidebar } from '../components/CategorySidebar';
+import { CategoryChips } from '../components/CategoryChips';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { ErrorState } from '../components/ErrorState';
 import { EmptyState } from '../components/EmptyState';
@@ -137,6 +138,13 @@ export default function Deals() {
         />
 
         <div className="flex-1">
+          {/* Quick filter chips */}
+          <CategoryChips
+            categories={categories}
+            selectedKey={selectedCategory}
+            onSelect={handleCategorySelect}
+          />
+
           {loading ? (
             <LoadingSpinner />
           ) : error ? (

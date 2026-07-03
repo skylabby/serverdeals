@@ -8,6 +8,7 @@ Standalone entry point:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 import time
@@ -19,6 +20,7 @@ from apscheduler.triggers.cron import CronTrigger
 from . import config
 from .categories import CATEGORIES
 from .ebay_client import EBayClient
+from .playwright_fallback import fallback_search, ScrapedListing
 
 from backend.db.store import store_listings, seed_categories
 
@@ -73,6 +75,53 @@ def scrape_all_categories(
                     category.display_name,
                     category.ebay_category_id,
                 )
+
+                # Playwright fallback for sparse API results (< 5 items)
+                if count < 5:
+                    logger.info(
+                        "  → API returned only %d items — trying Playwright fallback…",
+                        count,
+                    )
+                    try:
+                        pw_items = asyncio.run(
+                            fallback_search(
+                                keywords=keywords,
+                                category_id=category.ebay_category_id,
+                                max_items=50,
+                            )
+                        )
+                        if pw_items:
+                            logger.info(
+                                "  → Playwright fallback: %d additional items",
+                                len(pw_items),
+                            )
+                            stats[category.display_name] += len(pw_items)
+                            stats["total"] += len(pw_items)
+                            # Convert ScrapedListing to EBayListing for storage
+                            if store_callback:
+                                from .ebay_client import EBayListing
+                                pw_listings = [
+                                    EBayListing(
+                                        item_id=pw.item_id or f"pw_{i}",
+                                        title=pw.title,
+                                        current_price=pw.price,
+                                        currency_id=pw.currency,
+                                        condition=pw.condition,
+                                        condition_id=3000,
+                                        listing_type=pw.listing_type,
+                                        end_time="",
+                                        gallery_url=pw.image_url,
+                                        view_item_url=pw.item_url,
+                                    )
+                                    for i, pw in enumerate(pw_items)
+                                ]
+                                try:
+                                    stored = store_callback(pw_listings, category)
+                                    logger.debug("  Stored %d fallback items", stored)
+                                except Exception:
+                                    logger.exception("Fallback store failed")
+                    except Exception:
+                        logger.exception("Playwright fallback failed for '%s'", category.display_name)
 
                 if store_callback and result.items:
                     try:
