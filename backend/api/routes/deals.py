@@ -52,6 +52,17 @@ def _apply_score(listing: Listing) -> tuple[Optional[float], Optional[str], Opti
         return None, None, None
 
 
+def _ebay_web_url(ebay_item_id: str) -> str:
+    """Convert an eBay item ID to a proper ebay.com URL.
+
+    Buy Browse API item IDs are in legacy format ``v1|NUMERIC|0``.
+    Strip the prefix/suffix to get the numeric ID for the web URL.
+    """
+    # v1|196093686049|0 → 196093686049
+    numeric = ebay_item_id.split("|")[1] if "|" in ebay_item_id else ebay_item_id
+    return f"https://www.ebay.com/itm/{numeric}"
+
+
 def _build_deal_out(listing: Listing) -> DealOut:
     """Convert a SQLAlchemy Listing into a DealOut with scoring applied."""
     score, classification, price_range = _apply_score(listing)
@@ -70,7 +81,7 @@ def _build_deal_out(listing: Listing) -> DealOut:
         score=score,
         classification=classification,
         price_range=price_range,
-        view_url=f"https://www.ebay.com/itm/{listing.ebay_item_id}",
+        view_url=_ebay_web_url(listing.ebay_item_id),
     )
 
 
