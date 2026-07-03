@@ -316,7 +316,6 @@ npm run dev
 ## Links
 
 - **GitHub**: [github.com/skylabby/serverdeals](https://github.com/skylabby/serverdeals)
-- **Gitea**: [gitea.skylabshome.net/skylab/serverdeals](https://gitea.skylabshome.net/skylab/serverdeals)
 - **Live demo**: [deals.skylabshome.net](https://deals.skylabshome.net) (coming soon)
 
 ---
