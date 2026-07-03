@@ -20,6 +20,13 @@ from backend.api.routes import categories, deals, stats
 
 logger = logging.getLogger(__name__)
 
+# ── eBay Marketplace Deletion Notification ────────────────────────────────
+# eBay requires a compliant HTTPS endpoint to enable production keysets.
+# This responds to the challenge_code verification during setup and logs
+# any actual deletion notifications for compliance.
+
+EBAY_NOTIFICATION_TOKEN = "4d2caa7d1e03b2614f911b6b194f21f4999137d4e4a0f8ce"
+
 # ── Database — may be unavailable ───────────────────────────────────────────
 
 _engine = None
@@ -92,6 +99,26 @@ def create_app() -> FastAPI:
             "status": "ok" if db_ok else "degraded",
             "database": "connected" if db_ok else "unavailable",
         }
+
+    # eBay Marketplace Account Deletion notification endpoint
+    # eBay verifies with challenge_code GET, sends deletion XML POSTs later
+    from fastapi import Request, Response
+
+    @app.api_route("/ebay-notification", methods=["GET", "POST"])
+    async def ebay_notification(request: Request):
+        challenge = request.query_params.get("challenge_code")
+        if challenge:
+            # Verification: return challenge_code with 200
+            logger.info("eBay notification endpoint VERIFIED (challenge: %s)", challenge)
+            return Response(
+                content=challenge,
+                media_type="text/plain",
+                headers={"Content-Type": "text/plain"},
+            )
+        # Actual deletion notification — log and acknowledge
+        body = await request.body()
+        logger.info("eBay deletion notification received: %s", body[:500] if body else "(empty)")
+        return {"ok": True}
 
     # Register routers
     app.include_router(deals.router)
