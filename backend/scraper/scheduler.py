@@ -20,12 +20,7 @@ from . import config
 from .categories import CATEGORIES
 from .ebay_client import EBayClient
 
-try:
-    from backend.db.store import store_listings
-    _DB_AVAILABLE = True
-except ImportError:
-    store_listings = None
-    _DB_AVAILABLE = False
+from backend.db.store import store_listings, seed_categories
 
 logger = logging.getLogger(__name__)
 
@@ -106,15 +101,14 @@ def run_once() -> dict[str, int]:
     logger.info("=== Starting eBay scrape cycle at %s ===", datetime.now(timezone.utc).isoformat())
     start = time.monotonic()
 
-    import asyncio
-
-    async def _store_callback(items, category):
-        if _DB_AVAILABLE and store_listings:
-            return await store_listings(items, category.key)
-        return 0
+    # Seed categories first
+    try:
+        seed_categories()
+    except Exception:
+        logger.exception("Failed to seed categories")
 
     stats = scrape_all_categories(
-        store_callback=lambda items, cat: asyncio.run(_store_callback(items, cat))
+        store_callback=store_listings
     )
 
     elapsed = time.monotonic() - start

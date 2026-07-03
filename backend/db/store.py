@@ -1,107 +1,113 @@
 """
-Storage layer for persisting scraped eBay listings to PostgreSQL.
+Synchronous storage for persisting scraped eBay listings to PostgreSQL.
 
-Called by the scheduler with items fetched from the eBay API.
+Uses the synchronous DATABASE_URL (psycopg2) to avoid asyncio event-loop issues.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.ext.asyncio import AsyncSession
+import psycopg2
+import psycopg2.extras
+from dotenv import load_dotenv
 
-from backend.db.database import async_session
-from backend.db.models import Listing, PriceSnapshot
+from backend.scraper.categories import CATEGORIES, CategoryDef
 from backend.scraper.ebay_client import EBayListing
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+# Sync DATABASE_URL — replace asyncpg with psycopg2
+_SYNC_URL = os.getenv("DATABASE_URL", "").replace(
+    "postgresql+asyncpg://", "postgresql://"
+).replace("postgresql://", "postgresql://")
 
-async def store_listings(
-    items: list[EBayListing],
-    category_key: str,
-) -> int:
-    """
-    Upsert scraped listings into the database.
 
-    - New listings are inserted.
-    - Existing listings (matched by ebay_item_id) update price/condition/end_time.
-    - Price snapshots are appended when the price changes or is first seen.
+def _get_conn():
+    return psycopg2.connect(_SYNC_URL)
 
-    Returns the number of listings upserted.
-    """
+
+def seed_categories() -> int:
+    """Insert all 25 categories. Returns count inserted."""
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            count = 0
+            for cat in CATEGORIES:
+                cur.execute(
+                    """INSERT INTO categories (key, display_name, ebay_search_query, group_key, ebay_category_id)
+                       VALUES (%s, %s, %s, %s, %s)
+                       ON CONFLICT (key) DO UPDATE SET
+                         display_name = EXCLUDED.display_name,
+                         ebay_search_query = EXCLUDED.ebay_search_query,
+                         group_key = EXCLUDED.group_key,
+                         ebay_category_id = EXCLUDED.ebay_category_id""",
+                    (cat.key, cat.display_name, cat.ebay_search_query, cat.group_key, cat.ebay_category_id),
+                )
+                count += 1
+            conn.commit()
+            logger.info("Seeded %d categories", count)
+            return count
+    finally:
+        conn.close()
+
+
+def store_listings(items: list[EBayListing], category: CategoryDef) -> int:
+    """Upsert listings and record price snapshots. Returns count stored."""
     if not items:
         return 0
 
-    stored = 0
+    conn = _get_conn()
     now = datetime.now(timezone.utc)
+    stored = 0
 
-    async with async_session() as session:
-        for item in items:
-            try:
-                await _upsert_listing(session, item, category_key, now)
-                stored += 1
-            except Exception:
-                logger.exception("Failed to store listing %s", item.item_id)
-        await session.commit()
+    try:
+        with conn.cursor() as cur:
+            for item in items:
+                try:
+                    price = Decimal(str(item.price)) if item.price else Decimal("0")
+                    specs = json.dumps(item.specs) if item.specs else "{}"
 
-    logger.info("Stored %d/%d listings for category '%s'", stored, len(items), category_key)
+                    cur.execute(
+                        """INSERT INTO listings 
+                           (ebay_item_id, title, price, currency, condition, listing_type, 
+                            end_time, image_url, category_key, specs_json, first_seen, last_seen)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                           ON CONFLICT (ebay_item_id) DO UPDATE SET
+                             price = EXCLUDED.price,
+                             condition = EXCLUDED.condition,
+                             listing_type = EXCLUDED.listing_type,
+                             end_time = EXCLUDED.end_time,
+                             image_url = EXCLUDED.image_url,
+                             last_seen = EXCLUDED.last_seen""",
+                        (
+                            item.item_id, item.title or "", price, item.currency or "USD",
+                            item.condition or "Unknown", item.listing_type or "Unknown",
+                            item.end_time, item.gallery_url or "", category.key,
+                            specs, now, now,
+                        ),
+                    )
+
+                    # Record price snapshot
+                    cur.execute(
+                        """INSERT INTO price_snapshots (listing_id, price, captured_at)
+                           SELECT id, %s, %s FROM listings WHERE ebay_item_id = %s""",
+                        (price, now, item.item_id),
+                    )
+
+                    stored += 1
+                except Exception:
+                    logger.exception("Failed to store listing %s", item.item_id)
+
+            conn.commit()
+            logger.info("Stored %d/%d listings for '%s'", stored, len(items), category.display_name)
+    finally:
+        conn.close()
+
     return stored
-
-
-async def _upsert_listing(
-    session: AsyncSession,
-    item: EBayListing,
-    category_key: str,
-    now: datetime,
-) -> None:
-    """Upsert a single listing and record its price snapshot."""
-    price = Decimal(str(item.price)) if item.price else Decimal("0")
-
-    stmt = pg_insert(Listing).values(
-        ebay_item_id=item.item_id,
-        title=item.title or "",
-        price=price,
-        currency=item.currency or "USD",
-        condition=item.condition or "Unknown",
-        listing_type=item.listing_type or "Unknown",
-        end_time=item.end_time,
-        image_url=item.gallery_url or "",
-        category_key=category_key,
-        specs_json=json.dumps(item.specs) if item.specs else "{}",
-        first_seen=now,
-        last_seen=now,
-    )
-    stmt = stmt.on_conflict_do_update(
-        index_elements=["ebay_item_id"],
-        set_=dict(
-            price=price,
-            condition=item.condition or "Unknown",
-            listing_type=item.listing_type or "Unknown",
-            end_time=item.end_time,
-            image_url=item.gallery_url or "",
-            last_seen=now,
-        ),
-    )
-    await session.execute(stmt)
-
-    # Record price snapshot
-    snap = PriceSnapshot(
-        listing_id=select(Listing.id).where(Listing.ebay_item_id == item.item_id).scalar_subquery(),
-        price=price,
-        captured_at=now,
-    )
-    # Use raw insert to avoid loading the listing first
-    from sqlalchemy import text
-    await session.execute(
-        text(
-            "INSERT INTO price_snapshots (listing_id, price, captured_at) "
-            "SELECT id, :price, :captured_at FROM listings WHERE ebay_item_id = :item_id"
-        ),
-        {"price": price, "captured_at": now, "item_id": item.item_id},
-    )
