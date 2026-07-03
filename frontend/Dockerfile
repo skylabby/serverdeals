@@ -15,7 +15,9 @@ COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 
 # Copy source and build
+# Empty VITE_API_URL → use relative /api/ paths (proxied by nginx)
 COPY frontend/ ./
+ARG VITE_API_URL=
 RUN npm run build
 
 # ── Stage 2: Serve ───────────────────────────────────────────────────────────
