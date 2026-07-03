@@ -11,6 +11,7 @@ is not set or the database is unreachable.
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -26,7 +27,7 @@ logger = logging.getLogger(__name__)
 # This responds to the challenge_code verification during setup and logs
 # any actual deletion notifications for compliance.
 
-EBAY_NOTIFICATION_TOKEN = "4d2caa7d1e03b2614f911b6b194f21f4999137d4e4a0f8ce"
+EBAY_NOTIFICATION_TOKEN = os.getenv("EBAY_NOTIFICATION_VERIFICATION_TOKEN", "")
 
 # ── Database — may be unavailable ───────────────────────────────────────────
 
@@ -105,7 +106,7 @@ def create_app() -> FastAPI:
     # Verification: SHA-256(challengeCode + verificationToken + endpoint)
     import hashlib
 
-    EBAY_VERIFY_TOKEN = "4d2caa7d1e03b2614f911b6b194f21f4999137d4e4a0f8ce"
+    EBAY_VERIFY_TOKEN = os.getenv("EBAY_NOTIFICATION_VERIFICATION_TOKEN", "")
     EBAY_NOTIFY_ENDPOINT = "https://deals.skylabshome.net/ebay-notification"
 
     @app.api_route("/ebay-notification", methods=["GET", "POST"])
