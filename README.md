@@ -54,7 +54,7 @@ ServerDeals is a self-hosted service that continuously scrapes US eBay for serve
 ### 1. Clone & Configure
 
 ```bash
-git clone https://github.com/skylabshome/serverdeals.git
+git clone https://github.com/skylabby/serverdeals.git
 cd serverdeals
 cp .env.example .env
 # Edit .env with your eBay API keys and alert preferences
@@ -277,7 +277,7 @@ For deploying to a remote server (VPS, homelab, Proxmox VM):
 
 ```bash
 # On the target server
-git clone https://github.com/skylabshome/serverdeals.git /opt/serverdeals
+git clone https://github.com/skylabby/serverdeals.git /opt/serverdeals
 cd /opt/serverdeals
 
 # Configure
@@ -315,7 +315,7 @@ npm run dev
 
 ## Links
 
-- **GitHub**: [github.com/skylabshome/serverdeals](https://github.com/skylabshome/serverdeals)
+- **GitHub**: [github.com/skylabby/serverdeals](https://github.com/skylabby/serverdeals)
 - **Gitea**: [gitea.skylabshome.net/skylab/serverdeals](https://gitea.skylabshome.net/skylab/serverdeals)
 - **Live demo**: [deals.skylabshome.net](https://deals.skylabshome.net) (coming soon)
 
