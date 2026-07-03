@@ -7,10 +7,10 @@ function ScoreBadge({ score }: { score: number | null }) {
 
   const colorClass =
     score >= 40
-      ? 'bg-emerald-900/30 text-emerald-300 border-emerald-700/30'
+      ? 'bg-green-900/30 text-green-400 border-green-800'
       : score >= 20
-        ? 'bg-amber-900/30 text-amber-300 border-amber-700/30'
-        : 'bg-slate-700/30 text-slate-400 border-slate-600/30';
+        ? 'bg-yellow-900/30 text-yellow-400 border-yellow-800'
+        : 'bg-slate-800/50 text-slate-400 border-slate-700';
 
   return (
     <span className={`rounded-md border px-2 py-1 text-xs font-bold ${colorClass}`}>
@@ -24,10 +24,10 @@ function ConditionBadge({ condition }: { condition: string | null }) {
 
   const lower = condition.toLowerCase();
   const colorClass = lower.includes('new')
-    ? 'bg-emerald-900/30 text-emerald-300 border-emerald-700/30'
+    ? 'bg-green-900/30 text-green-400 border-green-800'
     : lower.includes('refurbished')
-      ? 'bg-amber-900/30 text-amber-300 border-amber-700/30'
-      : 'bg-slate-700/30 text-slate-400 border-slate-600/30';
+      ? 'bg-yellow-900/30 text-yellow-400 border-yellow-800'
+      : 'bg-slate-800/50 text-slate-400 border-slate-700';
 
   return (
     <span className={`rounded-md border px-2 py-1 text-xs font-medium ${colorClass}`}>
@@ -42,8 +42,8 @@ function ListingTypeBadge({ type }: { type: string | null }) {
   return (
     <span className={`rounded-md border px-2 py-1 text-xs font-medium ${
       isFixed
-        ? 'bg-blue-900/30 text-blue-300 border-blue-700/30'
-        : 'bg-purple-900/30 text-purple-300 border-purple-700/30'
+        ? 'bg-brand-900/20 text-brand-400 border-brand-800'
+        : 'bg-purple-900/30 text-purple-300 border-purple-700'
     }`}>
       {isFixed ? 'Buy It Now' : 'Auction'}
     </span>
@@ -75,13 +75,13 @@ function PriceRangeBar({
         <span>Low ${min.toLocaleString()}</span>
         <span>High ${max.toLocaleString()}</span>
       </div>
-      <div className="h-2 w-full rounded-full bg-slate-700/50 overflow-hidden">
+      <div className="h-2 w-full rounded-full bg-slate-800 overflow-hidden">
         <div
-          className="h-full rounded-full bg-gradient-to-r from-emerald-500 via-amber-400 to-rose-500 transition-all"
+          className="h-full rounded-full bg-gradient-to-r from-brand-500 via-yellow-500 to-rose-500 transition-all"
           style={{ width: `${pct}%` }}
         />
       </div>
-      <div className="mt-1 text-center text-[11px] font-medium text-blue-400">
+      <div className="mt-1 text-center text-[11px] font-semibold text-brand-400">
         ${price.toLocaleString('en-US', { minimumFractionDigits: 2 })}
       </div>
     </div>
@@ -98,9 +98,9 @@ export function ListingCard({ deal }: { deal: Deal }) {
       : 'Price N/A';
 
   return (
-    <div className="group flex flex-col rounded-xl border border-slate-700/50 bg-slate-800/40 p-4 shadow-sm transition-all duration-200 hover:border-slate-600 hover:shadow-lg hover:bg-slate-800 hover:-translate-y-0.5">
+    <div className="group flex flex-col rounded-xl border border-border bg-surface-raised p-4 shadow-sm transition-all duration-200 hover:border-brand-500/30 hover:shadow-lg hover:shadow-brand-500/5 hover:bg-surface-overlay hover:-translate-y-0.5">
       {/* Image */}
-      <div className="mb-3 aspect-video w-full overflow-hidden rounded-lg bg-slate-700/30">
+      <div className="mb-3 aspect-video w-full overflow-hidden rounded-lg bg-slate-800/50">
         {deal.image_url ? (
           <img
             src={deal.image_url}
@@ -124,7 +124,7 @@ export function ListingCard({ deal }: { deal: Deal }) {
       </div>
 
       {/* Title */}
-      <h3 className="mb-2 line-clamp-2 text-sm font-medium text-slate-200 group-hover:text-blue-400 transition-colors">
+      <h3 className="mb-2 line-clamp-2 text-sm font-medium text-slate-200 group-hover:text-brand-400 transition-colors">
         {deal.title}
       </h3>
 
@@ -145,21 +145,21 @@ export function ListingCard({ deal }: { deal: Deal }) {
       <PriceRangeBar priceRange={deal.price_range} price={deal.price} />
 
       {/* Footer actions */}
-      <div className="mt-3 flex items-center justify-between gap-3 pt-3 border-t border-slate-700/30">
+      <div className="mt-3 flex items-center justify-between gap-3 pt-3 border-t border-border-subtle">
         <a
           href={deal.view_url ?? `https://www.ebay.com/itm/${deal.ebay_item_id}`}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3.5 py-2 text-xs font-semibold text-white transition-all hover:bg-blue-500 hover:shadow-md hover:shadow-blue-600/25"
+          className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3.5 py-2 text-xs font-semibold text-white transition-all hover:bg-brand-500 hover:shadow-md hover:shadow-brand-500/25"
         >
           <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
           </svg>
-          eBay
+          View Deal
         </a>
         <Link
           to={`/model/${deal.category_key}`}
-          className="text-xs font-medium text-slate-500 transition-colors hover:text-blue-400"
+          className="text-xs font-medium text-slate-500 transition-colors hover:text-brand-400"
         >
           Price history →
         </Link>
