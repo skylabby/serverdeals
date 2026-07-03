@@ -1,19 +1,18 @@
 """
-eBay Finding API client for the ServerDeals scraper.
+eBay Buy Browse API client for the ServerDeals scraper.
 
-Talks to the eBay Finding Service (XML-based) to search active listings
-and completed (sold) items for price history. Handles auth, pagination,
-rate limiting, retry/backoff, and XML parsing.
+Uses the modern REST Buy Browse API (JSON) with OAuth 2.0 client-credentials
+grant instead of the deprecated XML Finding API. Handles auth, token refresh,
+pagination, rate limiting, and retry/backoff.
 """
 
 from __future__ import annotations
 
 import logging
 import time
-import xml.etree.ElementTree as ET
+from base64 import b64encode
 from dataclasses import dataclass, field
 from typing import Optional
-from urllib.parse import urlencode
 
 import httpx
 
@@ -21,13 +20,13 @@ from . import config
 
 logger = logging.getLogger(__name__)
 
-# ── eBay Finding API XML namespaces ─────────────────────────────────────
-_NS = "http://www.ebay.com/marketplace/search/v1/services"
+
+# ── Dataclasses (same shape as before — compatible with store/scheduler) ──
 
 
 @dataclass
 class EBayListing:
-    """Parsed eBay listing from the Finding API response."""
+    """Parsed eBay listing from the Buy Browse API response."""
 
     item_id: str
     title: str
@@ -36,9 +35,9 @@ class EBayListing:
     condition: str
     condition_id: int
     listing_type: str
-    end_time: str  # ISO 8601
-    gallery_url: str
-    view_item_url: str
+    end_time: str       # ISO 8601 — mapped from itemCreationDate
+    gallery_url: str    # mapped from image.imageUrl
+    view_item_url: str  # mapped from itemWebUrl
     category_id: str = ""
     category_name: str = ""
     location: str = ""
@@ -61,75 +60,94 @@ class SearchResult:
     category_id: Optional[int] = None
 
 
-def _ns(tag: str) -> str:
-    """Qualify a tag name with the Finding API namespace."""
-    return f"{{{_NS}}}{tag}"
+# ── Helpers ──────────────────────────────────────────────────────────────
 
 
-def _text(el: ET.Element | None, default: str = "") -> str:
-    """Safely get element text, returning default on None/missing."""
-    return el.text.strip() if el is not None and el.text else default
+def _map_buying_options(options: list[str]) -> str:
+    """Map buyingOptions array to a listing type string."""
+    if not options:
+        return "FixedPrice"
+    if "AUCTION" in options:
+        return "Auction"
+    if "FIXED_PRICE" in options:
+        return "FixedPrice"
+    return options[0]
 
 
-def _float_text(el: ET.Element | None, default: float = 0.0) -> float:
-    """Safely get element text as float."""
-    if el is None or not el.text:
-        return default
-    try:
-        return float(el.text.strip())
-    except (ValueError, TypeError):
-        return default
+def _parse_buy_listing(item: dict) -> EBayListing:
+    """Parse a single item_summary entry into an EBayListing."""
 
-
-def _int_text(el: ET.Element | None, default: int = 0) -> int:
-    """Safely get element text as int."""
-    if el is None or not el.text:
-        return default
-    try:
-        return int(el.text.strip())
-    except (ValueError, TypeError):
-        return default
-
-
-def _parse_listing(item_el: ET.Element) -> EBayListing:
-    """Parse a single <item> element into an EBayListing."""
-
-    def find(path: str) -> ET.Element | None:
-        """Walk a slash-separated path of namespace-qualified tags."""
-        current = item_el
-        for part in path.split("/"):
-            child = current.find(_ns(part))
-            if child is None:
-                return None
-            current = child
-        return current
-
-    # Primary listing info
-    listing_type_el = find("listingInfo/listingType")
-    listing_type = _text(listing_type_el)
-
-    price_el = find("sellingStatus/convertedCurrentPrice")
-    currency_id = price_el.attrib.get("currencyId", "USD") if price_el is not None else "USD"
+    price = item.get("price", {})
+    image = item.get("image", {})
+    shipping = (item.get("shippingOptions") or [{}])[0].get("shippingCost", {})
+    location = item.get("itemLocation", {})
+    leaf_cats = item.get("leafCategoryIds") or []
 
     return EBayListing(
-        item_id=_text(find("itemId")),
-        title=_text(find("title")),
-        current_price=_float_text(price_el),
-        currency_id=currency_id,
-        condition=_text(find("condition/conditionDisplayName")),
-        condition_id=_int_text(find("condition/conditionId")),
-        listing_type=listing_type,
-        end_time=_text(find("listingInfo/endTime")),
-        gallery_url=_text(find("galleryURL")),
-        view_item_url=_text(find("viewItemURL")),
-        category_id=_text(find("primaryCategory/categoryId")),
-        category_name=_text(find("primaryCategory/categoryName")),
-        location=_text(find("location")),
-        shipping_type=_text(find("shippingInfo/shippingType")),
-        shipping_cost=_float_text(find("shippingInfo/shippingServiceCost")),
-        bids=_int_text(find("sellingStatus/bidCount")),
-        is_top_rated=_text(find("topRatedListing")).lower() == "true",
+        item_id=item.get("itemId", ""),
+        title=item.get("title", ""),
+        current_price=float(price.get("value", 0) or 0),
+        currency_id=price.get("currency", "USD"),
+        condition=item.get("condition", "N/A"),
+        condition_id=int(item.get("conditionId", "3000") or 3000),
+        listing_type=_map_buying_options(item.get("buyingOptions") or []),
+        end_time=item.get("itemCreationDate", ""),
+        gallery_url=image.get("imageUrl", ""),
+        view_item_url=item.get("itemWebUrl", ""),
+        category_id=leaf_cats[0] if leaf_cats else "",
+        category_name="",
+        location=location.get("country", "US"),
+        shipping_type="",
+        shipping_cost=float(shipping.get("value", 0) or 0),
+        bids=0,
+        is_top_rated=False,
+        raw=item,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────
+#  eBay OAuth 2.0 token manager
+# ─────────────────────────────────────────────────────────────────────────
+
+
+class _TokenManager:
+    """Lazy OAuth token fetcher with caching and auto-refresh."""
+
+    def __init__(self) -> None:
+        self._token: str | None = None
+        self._expires_at: float = 0.0
+
+    @property
+    def token(self) -> str:
+        """Return a valid OAuth token, refreshing if expired."""
+        if self._token is None or time.monotonic() > self._expires_at - 120:
+            self._refresh()
+        assert self._token is not None
+        return self._token
+
+    def _refresh(self) -> None:
+        """Fetch a new Application Access Token via client_credentials grant."""
+        credentials = f"{config.EBAY_APP_ID}:{config.EBAY_CERT_ID}"
+        encoded = b64encode(credentials.encode()).decode()
+
+        with httpx.Client(timeout=config.REQUEST_TIMEOUT) as client:
+            resp = client.post(
+                config.EBAY_OAUTH_TOKEN_URL,
+                headers={
+                    "Authorization": f"Basic {encoded}",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                data={
+                    "grant_type": "client_credentials",
+                    "scope": config.EBAY_OAUTH_SCOPE,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        self._token = data["access_token"]
+        self._expires_at = time.monotonic() + data.get("expires_in", 7200)
+        logger.debug("OAuth token refreshed (expires in %ds)", data.get("expires_in", 7200))
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -138,22 +156,24 @@ def _parse_listing(item_el: ET.Element) -> EBayListing:
 
 
 class EBayClient:
-    """Synchronous eBay Finding API client with rate limiting and retries."""
+    """Synchronous eBay Buy Browse API client with rate limiting and retries."""
 
     def __init__(
         self,
-        app_id: str | None = None,
-        endpoint: str | None = None,
         http_client: httpx.Client | None = None,
     ) -> None:
-        self._app_id = app_id or config.EBAY_APP_ID
-        self._endpoint = endpoint or config.EBAY_FINDING_ENDPOINT
+        self._token_mgr = _TokenManager()
         self._last_call_time: float = 0.0
-        self._http = http_client  # Allow injection for testing
+        self._http = http_client
 
-        if not self._app_id:
+        # Validate credentials
+        if not config.EBAY_APP_ID:
             raise ValueError(
-                "EBAY_APP_ID is required. Set it in .env or pass app_id= explicitly."
+                "EBAY_APP_ID is required. Set it in .env."
+            )
+        if not config.EBAY_CERT_ID:
+            raise ValueError(
+                "EBAY_CERT_ID is required. Set it in .env."
             )
 
     # ── HTTP plumbing ────────────────────────────────────────────────
@@ -165,7 +185,7 @@ class EBayClient:
             self._http = httpx.Client(
                 timeout=config.REQUEST_TIMEOUT,
                 headers={
-                    "Accept": "application/xml",
+                    "Accept": "application/json",
                     "User-Agent": "ServerDeals/1.0 (python-httpx)",
                 },
             )
@@ -177,45 +197,18 @@ class EBayClient:
         if elapsed < config.MIN_CALL_INTERVAL_SEC:
             time.sleep(config.MIN_CALL_INTERVAL_SEC - elapsed)
 
-    def _build_params(
-        self,
-        keywords: str,
-        operation_name: str | None = None,
-        category_id: int | None = None,
-        page_number: int = 1,
-        entries_per_page: int | None = None,
-    ) -> dict[str, str]:
-        """Construct the query-string params for a Finding API call."""
-        params: dict[str, str] = {
-            "OPERATION-NAME": operation_name or config.OPERATION_SEARCH,
-            "SERVICE-VERSION": "1.0.0",
-            "SECURITY-APPNAME": self._app_id,
-            "RESPONSE-DATA-FORMAT": "XML",
-            "REST-PAYLOAD": "",
-            "keywords": keywords,
-            "paginationInput.entriesPerPage": str(
-                entries_per_page or config.PAGE_SIZE
-            ),
-            "paginationInput.pageNumber": str(page_number),
-        }
-        if category_id is not None:
-            params["categoryId"] = str(category_id)
-        return params
-
     def _call_api(
         self,
-        keywords: str,
-        operation_name: str | None = None,
-        category_id: int | None = None,
-        page_number: int = 1,
-    ) -> str:
-        """Make a single API call with retry+backoff. Returns XML body string."""
-        params = self._build_params(
-            keywords=keywords,
-            operation_name=operation_name,
-            category_id=category_id,
-            page_number=page_number,
-        )
+        path: str,
+        params: dict[str, str] | None = None,
+    ) -> dict:
+        """
+        Make a single API call with retry+backoff and OAuth auth.
+
+        Returns parsed JSON dict.
+        """
+        params = params or {}
+        url = f"{config.EBAY_BUY_BROWSE_BASE}/{path.lstrip('/')}"
 
         last_exception: Exception | None = None
         for attempt in range(config.MAX_RETRIES + 1):
@@ -223,12 +216,26 @@ class EBayClient:
                 self._rate_limit()
                 self._last_call_time = time.monotonic()
 
-                url = f"{self._endpoint}?{urlencode(params)}"
-                logger.debug("eBay API call: %s …", url[:120])
+                logger.debug("eBay API call: %s?%s", url[:100], str(params)[:100])
 
-                resp = self._client.get(url)
+                resp = self._client.get(
+                    url,
+                    params=params,
+                    headers={
+                        "Authorization": f"Bearer {self._token_mgr.token}",
+                        "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
+                    },
+                )
+
                 if resp.status_code == 200:
-                    return resp.text
+                    return resp.json()
+
+                if resp.status_code == 401:
+                    # Token expired — force refresh and retry once
+                    logger.info("OAuth token expired — refreshing")
+                    self._token_mgr._refresh()
+                    continue
+
                 if resp.status_code in config.RETRYABLE_STATUS_CODES:
                     logger.warning(
                         "eBay API returned %d (attempt %d/%d)",
@@ -237,7 +244,6 @@ class EBayClient:
                         config.MAX_RETRIES + 1,
                     )
                 else:
-                    # Non-retryable error — raise immediately
                     resp.raise_for_status()
 
             except (httpx.TimeoutException, httpx.ConnectError) as exc:
@@ -255,66 +261,7 @@ class EBayClient:
                 logger.info("Retrying in %.1fs …", delay)
                 time.sleep(delay)
 
-        # All retries exhausted
         raise last_exception or RuntimeError("eBay API call failed after all retries")
-
-    def _parse_response(self, xml_body: str) -> ET.Element:
-        """Parse the XML response, raising on eBay error."""
-        root = ET.fromstring(xml_body)
-
-        # Check for eBay-level errors
-        ack = root.attrib.get("ack", "")
-        if ack == "Failure":
-            errors = root.findall(f".//{_ns('errorMessage')}/{_ns('error')}")
-            messages = []
-            for e in errors:
-                msg = _text(e.find(_ns("message")))
-                messages.append(msg)
-            error_str = "; ".join(messages) if messages else "Unknown eBay API error"
-            raise EBayAPIError(error_str, root)
-
-        if ack == "PartialFailure":
-            logger.warning("eBay API returned PartialFailure — some items may be missing")
-
-        return root
-
-    def _parse_search_items(
-        self,
-        root: ET.Element,
-        keywords: str,
-        category_id: int | None,
-        page_number: int,
-    ) -> SearchResult:
-        """Parse <findItemsByKeywordsResponse> or <findCompletedItemsResponse>."""
-        search_result_el = root.find(_ns("searchResult"))
-        if search_result_el is None:
-            logger.warning("No searchResult element in response")
-            return SearchResult(
-                items=[],
-                total_entries=0,
-                page_number=page_number,
-                entries_per_page=config.PAGE_SIZE,
-                query_keywords=keywords,
-                category_id=category_id,
-            )
-
-        total_str = search_result_el.attrib.get("count", "0")
-        total = int(total_str) if total_str.isdigit() else 0
-        items: list[EBayListing] = []
-        for item_el in search_result_el.findall(_ns("item")):
-            try:
-                items.append(_parse_listing(item_el))
-            except Exception:
-                logger.exception("Failed to parse an item element; skipping")
-
-        return SearchResult(
-            items=items,
-            total_entries=total,
-            page_number=page_number,
-            entries_per_page=config.PAGE_SIZE,
-            query_keywords=keywords,
-            category_id=category_id,
-        )
 
     # ── Public API ───────────────────────────────────────────────────
 
@@ -326,10 +273,10 @@ class EBayClient:
         max_pages: int | None = None,
     ) -> SearchResult:
         """
-        Search active eBay listings.
+        Search active eBay listings via Buy Browse API.
 
         Args:
-            keywords: Search keywords (required by eBay Finding API).
+            keywords: Search keywords.
             category_id: Optional eBay category ID to filter by.
             limit: Max total items to return (aggregates across pages).
             max_pages: Max pages to fetch (defaults to config.MAX_PAGES_PER_CATEGORY).
@@ -339,39 +286,54 @@ class EBayClient:
         """
         pages_limit = max_pages if max_pages is not None else config.MAX_PAGES_PER_CATEGORY
         items_limit = limit or pages_limit * config.PAGE_SIZE
+        entries_per_page = min(config.PAGE_SIZE, 200)  # Buy API max is 200
 
         all_items: list[EBayListing] = []
-        page = 1
+        offset = 0
+        api_total = 0
 
-        while page <= pages_limit:
-            xml_body = self._call_api(
-                keywords=keywords,
-                operation_name=config.OPERATION_SEARCH,
-                category_id=category_id,
-                page_number=page,
-            )
-            root = self._parse_response(xml_body)
-            result = self._parse_search_items(root, keywords, category_id, page)
+        for page in range(1, pages_limit + 1):
+            params: dict[str, str] = {
+                "q": keywords,
+                "limit": str(entries_per_page),
+                "offset": str(offset),
+            }
+            if category_id is not None:
+                params["category_ids"] = str(category_id)
 
-            all_items.extend(result.items)
+            try:
+                data = self._call_api("item_summary/search", params)
+            except Exception as exc:
+                raise EBayAPIError(str(exc))
+
+            item_summaries = data.get("itemSummaries") or []
+            for item_data in item_summaries:
+                try:
+                    all_items.append(_parse_buy_listing(item_data))
+                except Exception:
+                    logger.exception("Failed to parse a listing; skipping")
+
+            total = data.get("total", 0)
+            api_total = total
             logger.info(
-                "Category %s: page %d → %d items (total so far: %d)",
+                "Category %s: page %d → %d items (total so far: %d, API total: %d)",
                 category_id or "all",
                 page,
-                len(result.items),
+                len(item_summaries),
                 len(all_items),
+                total,
             )
 
-            # Stop if we've hit the desired limit or exhausted results
+            # Stop conditions
             if len(all_items) >= items_limit:
                 break
-            if len(result.items) < config.PAGE_SIZE:
-                # Last page — no more results
+            if len(item_summaries) < entries_per_page:
+                # Last page — exhausted
                 break
-            if result.total_entries and len(all_items) >= result.total_entries:
+            if offset + len(item_summaries) >= total:
                 break
 
-            page += 1
+            offset += entries_per_page
 
         # Trim to exact limit if needed
         if items_limit and len(all_items) > items_limit:
@@ -379,9 +341,9 @@ class EBayClient:
 
         return SearchResult(
             items=all_items,
-            total_entries=len(all_items),
+            total_entries=api_total,
             page_number=1,
-            entries_per_page=config.PAGE_SIZE,
+            entries_per_page=entries_per_page,
             query_keywords=keywords,
             category_id=category_id,
         )
@@ -395,55 +357,14 @@ class EBayClient:
         """
         Search completed (sold) eBay listings for price history.
 
-        Args:
-            keywords: Search keywords.
-            category_id: Optional eBay category ID.
-            limit: Max total items.
-
-        Returns:
-            SearchResult with completed listing items.
+        NOTE: The Buy Browse API does not support completed-item search.
+        This method is retained for API compatibility but raises NotImplementedError.
+        Consider using the eBay Analytics API or Marketplace Insights API for
+        price history data.
         """
-        items_limit = limit or config.PAGE_SIZE * 2  # Default: 2 pages
-
-        all_items: list[EBayListing] = []
-        page = 1
-
-        while True:
-            xml_body = self._call_api(
-                keywords=keywords,
-                operation_name=config.OPERATION_COMPLETED,
-                category_id=category_id,
-                page_number=page,
-            )
-            root = self._parse_response(xml_body)
-            result = self._parse_search_items(root, keywords, category_id, page)
-
-            all_items.extend(result.items)
-            logger.info(
-                "Completed items cat %s p%d: %d items",
-                category_id or "all",
-                page,
-                len(result.items),
-            )
-
-            if len(all_items) >= items_limit:
-                break
-            if len(result.items) < config.PAGE_SIZE:
-                break
-            if result.total_entries and len(all_items) >= result.total_entries:
-                break
-            page += 1
-
-        if items_limit and len(all_items) > items_limit:
-            all_items = all_items[:items_limit]
-
-        return SearchResult(
-            items=all_items,
-            total_entries=len(all_items),
-            page_number=1,
-            entries_per_page=config.PAGE_SIZE,
-            query_keywords=keywords,
-            category_id=category_id,
+        raise NotImplementedError(
+            "Completed-item search is not available via the Buy Browse API. "
+            "Consider using the eBay Analytics API for Terapeak price data."
         )
 
     def close(self) -> None:
@@ -465,8 +386,7 @@ class EBayClient:
 
 
 class EBayAPIError(Exception):
-    """Raised when the eBay API returns an error (ack=Failure)."""
+    """Raised when the eBay API returns an error."""
 
-    def __init__(self, message: str, raw_xml: ET.Element | None = None) -> None:
+    def __init__(self, message: str) -> None:
         super().__init__(message)
-        self.raw_xml = raw_xml

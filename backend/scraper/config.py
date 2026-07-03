@@ -23,20 +23,11 @@ EBAY_CERT_ID: str = os.getenv("EBAY_CERT_ID", "")
 EBAY_ENV: str = os.getenv("EBAY_ENV", "sandbox")
 
 
-# ── eBay API Endpoints ──────────────────────────────────────────────────
+# ── eBay API Endpoints (Buy Browse API — REST/JSON with OAuth) ──────────
 
-_EBAY_SANDBOX_BASE = "https://svcs.sandbox.ebay.com/services/search/FindingService/v1"
-_EBAY_PRODUCTION_BASE = "https://svcs.ebay.com/services/search/FindingService/v1"
-
-EBAY_FINDING_ENDPOINT: str = (
-    _EBAY_SANDBOX_BASE if EBAY_ENV == "sandbox" else _EBAY_PRODUCTION_BASE
-)
-
-
-# ── eBay API Call Names (Finding Service) ───────────────────────────────
-
-OPERATION_SEARCH = "findItemsByKeywords"
-OPERATION_COMPLETED = "findCompletedItems"
+EBAY_OAUTH_TOKEN_URL = "https://api.ebay.com/identity/v1/oauth2/token"
+EBAY_BUY_BROWSE_BASE = "https://api.ebay.com/buy/browse/v1"
+EBAY_OAUTH_SCOPE = "https://api.ebay.com/oauth/api_scope"
 
 
 # ── Rate Limiting ───────────────────────────────────────────────────────
