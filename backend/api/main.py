@@ -13,8 +13,9 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from backend.api.routes import categories, deals, stats
 
@@ -101,20 +102,24 @@ def create_app() -> FastAPI:
         }
 
     # eBay Marketplace Account Deletion notification endpoint
-    # eBay verifies with challenge_code GET, sends deletion XML POSTs later
-    from fastapi import Request, Response
+    # Verification: SHA-256(challengeCode + verificationToken + endpoint)
+    import hashlib
+
+    EBAY_VERIFY_TOKEN = "4d2caa7d1e03b2614f911b6b194f21f4999137d4e4a0f8ce"
+    EBAY_NOTIFY_ENDPOINT = "https://api.deals.skylabshome.net/ebay-notification"
 
     @app.api_route("/ebay-notification", methods=["GET", "POST"])
     async def ebay_notification(request: Request):
         challenge = request.query_params.get("challenge_code")
         if challenge:
-            # Verification: return challenge_code with 200
-            logger.info("eBay notification endpoint VERIFIED (challenge: %s)", challenge)
-            return Response(
-                content=challenge,
-                media_type="text/plain",
-                headers={"Content-Type": "text/plain"},
-            )
+            # Verification: SHA-256(challengeCode + verificationToken + endpoint)
+            m = hashlib.sha256()
+            m.update(challenge.encode())
+            m.update(EBAY_VERIFY_TOKEN.encode())
+            m.update(EBAY_NOTIFY_ENDPOINT.encode())
+            response_hash = m.hexdigest()
+            logger.info("eBay verification challenge: %s → hash: %s", challenge, response_hash[:16])
+            return JSONResponse(content={"challengeResponse": response_hash})
         # Actual deletion notification — log and acknowledge
         body = await request.body()
         logger.info("eBay deletion notification received: %s", body[:500] if body else "(empty)")
