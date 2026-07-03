@@ -71,8 +71,10 @@ def store_listings(items: list[EBayListing], category: CategoryDef) -> int:
         with conn.cursor() as cur:
             for item in items:
                 try:
-                    price = Decimal(str(item.price)) if item.price else Decimal("0")
-                    specs = json.dumps(item.specs) if item.specs else "{}"
+                    price = Decimal(str(item.current_price)) if item.current_price else Decimal("0")
+                    specs = "{}"
+                    if hasattr(item, 'specs') and item.specs:
+                        specs = json.dumps(item.specs)
 
                     cur.execute(
                         """INSERT INTO listings 
@@ -87,7 +89,7 @@ def store_listings(items: list[EBayListing], category: CategoryDef) -> int:
                              image_url = EXCLUDED.image_url,
                              last_seen = EXCLUDED.last_seen""",
                         (
-                            item.item_id, item.title or "", price, item.currency or "USD",
+                            item.item_id, item.title or "", price, item.currency_id or "USD",
                             item.condition or "Unknown", item.listing_type or "Unknown",
                             item.end_time, item.gallery_url or "", category.key,
                             specs, now, now,
