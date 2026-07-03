@@ -1,0 +1,60 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# ServerDeals — Docker Compose (development)
+# ──────────────────────────────────────────────────────────────────────────────
+# Usage:
+#   docker compose up -d              # full stack
+#   docker compose up -d postgres     # database only
+#   docker compose build backend      # rebuild backend image
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: serverdeals-postgres
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: serverdeals
+      POSTGRES_PASSWORD: serverdeals
+      POSTGRES_DB: serverdeals
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U serverdeals -d serverdeals"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── Backend (FastAPI) ──────────────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: serverdeals-backend
+    ports:
+      - "8183:8000"
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Frontend (React + Nginx) ───────────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: serverdeals-frontend
+    ports:
+      - "8182:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+# ── Volumes ──────────────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
+    driver: local

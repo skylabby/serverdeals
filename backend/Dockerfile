@@ -45,8 +45,9 @@ WORKDIR /app
 # Copy the virtualenv from the builder stage
 COPY --from=builder /opt/venv /opt/venv
 
-# Copy application code
+# Copy application code and Alembic configuration
 COPY backend/ ./backend/
+COPY alembic.ini .
 
 # Default port for uvicorn
 EXPOSE 8000
