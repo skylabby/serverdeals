@@ -106,7 +106,7 @@ def create_app() -> FastAPI:
     import hashlib
 
     EBAY_VERIFY_TOKEN = "4d2caa7d1e03b2614f911b6b194f21f4999137d4e4a0f8ce"
-    EBAY_NOTIFY_ENDPOINT = "https://api.deals.skylabshome.net/ebay-notification"
+    EBAY_NOTIFY_ENDPOINT = "https://deals.skylabshome.net/ebay-notification"
 
     @app.api_route("/ebay-notification", methods=["GET", "POST"])
     async def ebay_notification(request: Request):
