@@ -4,6 +4,7 @@ import type { Deal, Category, Stats } from './types';
 import { api } from './lib/api';
 import { ListingCard } from './components/ListingCard';
 import { CategorySidebar } from './components/CategorySidebar';
+import { CategoryChips } from './components/CategoryChips';
 import { DealBadge } from './components/DealBadge';
 import { EmptyState } from './components/EmptyState';
 import { ErrorState } from './components/ErrorState';
@@ -111,6 +112,15 @@ function HomePage() {
         )}
 
         {/* Filters row */}
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          {/* Category quick-filter chips */}
+          <CategoryChips
+            categories={categories}
+            selectedKey={selectedCategory}
+            onSelect={handleCategorySelect}
+          />
+        </div>
+
         <div className="mb-4 flex flex-wrap items-center gap-2">
           {(['hot', 'good', 'fair'] as const).map((cls) => (
             <button
