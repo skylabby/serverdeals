@@ -54,34 +54,46 @@ ServerDeals is a self-hosted service that continuously scrapes US eBay for serve
 ### 1. Clone & Configure
 
 ```bash
-git clone <repo-url> serverdeals
+git clone https://github.com/skylabshome/serverdeals.git
 cd serverdeals
 cp .env.example .env
 # Edit .env with your eBay API keys and alert preferences
 ```
 
-### 2. Start
+### 2. Start (Docker Compose)
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
 
-The API becomes available at `http://localhost:8000/api` and the frontend at `http://localhost:3000`.
+The stack starts three services:
 
-### 3. Seed Categories (optional)
+| Service   | Port | Description                          |
+|-----------|------|--------------------------------------|
+| postgres  | 5433 | PostgreSQL 16 (data persisted)       |
+| backend   | 8183 | FastAPI (scraper + scoring + API)    |
+| frontend  | 8182 | Nginx serving React SPA + API proxy  |
+
+### 3. Seed Categories & Trigger Initial Scrape
 
 ```bash
+# Seed 25 hardware categories
 docker compose exec backend python -m backend.db.seed
+
+# Run scraper immediately (also auto-runs on startup via SCRAPE_ON_STARTUP)
+docker compose exec backend python -m backend.scraper.scheduler
 ```
 
 ### 4. Access
 
 | Service     | URL                                |
 |-------------|------------------------------------|
-| API         | http://localhost:8000/api          |
-| API Docs    | http://localhost:8000/docs         |
-| Frontend    | http://localhost:3000              |
-| Health      | http://localhost:8000/api/health   |
+| Frontend    | http://your-server:8182            |
+| API (direct)| http://your-server:8183            |
+| API Docs    | http://your-server:8183/docs       |
+| Health      | http://your-server:8183/api/health |
+
+> **Note:** The frontend proxies `/api/*` to the backend via Nginx. Set `VITE_API_URL=` (empty) at build time for server deployments — the Dockerfile does this by default.
 
 ---
 
@@ -102,6 +114,7 @@ docker compose exec backend python -m backend.db.seed
 | `EMAIL_FROM`           | No       | `SMTP_USER`          | From address for alert emails                    |
 | `TELEGRAM_BOT_TOKEN`   | No       | —                    | Telegram Bot API token (from @BotFather)         |
 | `TELEGRAM_CHAT_ID`     | No       | —                    | Default Telegram chat ID for alerts              |
+| `SCRAPE_ON_STARTUP`   | No       | `true`               | Run full scraper cycle on container start         |
 
 ---
 
@@ -258,6 +271,31 @@ await send_telegram_alert(chat_id=123456789, deals=deals)
 
 ---
 
+## Server Deployment
+
+For deploying to a remote server (VPS, homelab, Proxmox VM):
+
+```bash
+# On the target server
+git clone https://github.com/skylabshome/serverdeals.git /opt/serverdeals
+cd /opt/serverdeals
+
+# Configure
+cp .env.example .env
+# Set your eBay API keys and DATABASE_URL in .env
+
+# Start the stack
+docker compose up -d --build
+
+# Seed categories + trigger first scrape
+docker compose exec backend python -m backend.db.seed
+docker compose exec backend python -m backend.scraper.scheduler
+```
+
+The frontend will be available at `http://<server-ip>:8182`. For production, place it behind a reverse proxy (nginx/Caddy) with SSL.
+
+---
+
 ## Development
 
 ```bash
@@ -277,8 +315,9 @@ npm run dev
 
 ## Links
 
-- **Gitea repo**: [gitea.nousresearch.com/skylab/serverdeals](https://gitea.nousresearch.com/skylab/serverdeals)
-- **Outline plan**: [ServerDeals Stage Plan](https://outline.nousresearch.com/doc/serverdeals)
+- **GitHub**: [github.com/skylabshome/serverdeals](https://github.com/skylabshome/serverdeals)
+- **Gitea**: [gitea.skylabshome.net/skylab/serverdeals](https://gitea.skylabshome.net/skylab/serverdeals)
+- **Live demo**: [deals.skylabshome.net](https://deals.skylabshome.net) (coming soon)
 
 ---
 
