@@ -82,7 +82,7 @@ RETRYABLE_STATUS_CODES: tuple[int, ...] = (429, 500, 502, 503, 504)
 SCRAPE_CRON_SCHEDULE = os.getenv("SCRAPE_CRON_SCHEDULE", "0 */3 * * *")
 
 # Whether to run a scrape immediately on scheduler start
-SCRAPE_ON_STARTUP = os.getenv("SCRAPE_ON_STARTUP", "false").lower() in ("1", "true", "yes")
+SCRAPE_ON_STARTUP = os.getenv("SCRAPE_ON_STARTUP", "true").lower() in ("1", "true", "yes")
 
 
 # ── Logging ─────────────────────────────────────────────────────────────
